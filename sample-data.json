@@ -1,0 +1,170 @@
+{
+    "companies": [
+        {
+            "name": "Amaz-ManuOS",
+            "industry": "Wood Products Manufacturing",
+            "employees": 5800,
+            "revenue": 7200000000
+        },
+        {
+            "name": "Weyerhaeuser",
+            "industry": "Timber & Forest Products",
+            "employees": 9300,
+            "revenue": 10200000000
+        },
+        {
+            "name": "West Fraser Timber",
+            "industry": "Lumber Manufacturing",
+            "employees": 8500,
+            "revenue": 8900000000
+        }
+    ],
+    "oee": [
+        {
+            "name": "Veneer Lathe #1",
+            "oee": 85,
+            "availability": 92,
+            "performance": 95,
+            "quality": 97
+        },
+        {
+            "name": "Plywood Press #2",
+            "oee": 78,
+            "availability": 88,
+            "performance": 90,
+            "quality": 98
+        },
+        {
+            "name": "Sawmill Line A",
+            "oee": 82,
+            "availability": 90,
+            "performance": 93,
+            "quality": 98
+        },
+        {
+            "name": "Kiln Dryer #3",
+            "oee": 88,
+            "availability": 95,
+            "performance": 94,
+            "quality": 99
+        }
+    ],
+    "production": [
+        {
+            "day": "Mon",
+            "production": 5200
+        },
+        {
+            "day": "Tue",
+            "production": 5800
+        },
+        {
+            "day": "Wed",
+            "production": 5500
+        },
+        {
+            "day": "Thu",
+            "production": 6100
+        },
+        {
+            "day": "Fri",
+            "production": 5900
+        },
+        {
+            "day": "Sat",
+            "production": 4800
+        },
+        {
+            "day": "Sun",
+            "production": 3200
+        }
+    ],
+    "maintenance": [
+        {
+            "id": "TKT001",
+            "machine": "Veneer Lathe #1",
+            "issue": "Hydraulic pressure fluctuation",
+            "reportedBy": "John Smith",
+            "status": "Open",
+            "date": "2024-01-15"
+        },
+        {
+            "id": "TKT002",
+            "machine": "Plywood Press #2",
+            "issue": "Temperature sensor calibration needed",
+            "reportedBy": "Sarah Johnson",
+            "status": "In Progress",
+            "date": "2024-01-14"
+        },
+        {
+            "id": "TKT003",
+            "machine": "Sawmill Line A",
+            "issue": "Blade alignment off by 0.5mm",
+            "reportedBy": "Mike Davis",
+            "status": "Open",
+            "date": "2024-01-16"
+        }
+    ],
+    "inventory": {
+        "raw": [
+            {
+                "id": "RAW001",
+                "name": "Douglas Fir Logs",
+                "currentStock": 850,
+                "targetStock": 1200,
+                "unit": "tons"
+            },
+            {
+                "id": "RAW002",
+                "name": "Southern Pine Logs",
+                "currentStock": 620,
+                "targetStock": 1000,
+                "unit": "tons"
+            },
+            {
+                "id": "RAW003",
+                "name": "Adhesive Resin",
+                "currentStock": 450,
+                "targetStock": 800,
+                "unit": "gallons"
+            },
+            {
+                "id": "RAW004",
+                "name": "Phenolic Glue",
+                "currentStock": 280,
+                "targetStock": 500,
+                "unit": "gallons"
+            }
+        ],
+        "finished": [
+            {
+                "id": "FIN001",
+                "name": "3/4\" Plywood Sheets",
+                "currentStock": 3200,
+                "targetStock": 5000,
+                "unit": "sheets"
+            },
+            {
+                "id": "FIN002",
+                "name": "2x4x8 Lumber",
+                "currentStock": 8500,
+                "targetStock": 12000,
+                "unit": "pieces"
+            },
+            {
+                "id": "FIN003",
+                "name": "Engineered I-Joists",
+                "currentStock": 1800,
+                "targetStock": 3000,
+                "unit": "units"
+            },
+            {
+                "id": "FIN004",
+                "name": "LVL Beams",
+                "currentStock": 950,
+                "targetStock": 1500,
+                "unit": "units"
+            }
+        ]
+    }
+}

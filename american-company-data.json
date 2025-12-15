@@ -1,0 +1,231 @@
+{
+    "companies": [
+        {
+            "name": "Georgia-Pacific LLC",
+            "industry": "Wood Products & Paper Manufacturing",
+            "employees": 35000,
+            "revenue": 18500000000,
+            "location": "Atlanta, Georgia, USA"
+        },
+        {
+            "name": "International Paper Company",
+            "industry": "Paper & Packaging Products",
+            "employees": 38000,
+            "revenue": 19400000000,
+            "location": "Memphis, Tennessee, USA"
+        },
+        {
+            "name": "Weyerhaeuser Company",
+            "industry": "Timber & Real Estate",
+            "employees": 9200,
+            "revenue": 10300000000,
+            "location": "Seattle, Washington, USA"
+        }
+    ],
+    "oee": [
+        {
+            "name": "Plywood Press Line 1",
+            "oee": 87,
+            "availability": 94,
+            "performance": 96,
+            "quality": 96
+        },
+        {
+            "name": "Veneer Lathe Station A",
+            "oee": 82,
+            "availability": 89,
+            "performance": 93,
+            "quality": 99
+        },
+        {
+            "name": "Sawmill Production Line 2",
+            "oee": 79,
+            "availability": 86,
+            "performance": 91,
+            "quality": 101
+        },
+        {
+            "name": "Kiln Dryer Unit 4",
+            "oee": 91,
+            "availability": 97,
+            "performance": 95,
+            "quality": 99
+        },
+        {
+            "name": "Laminating Press 3",
+            "oee": 85,
+            "availability": 92,
+            "performance": 94,
+            "quality": 98
+        }
+    ],
+    "production": [
+        {
+            "day": "Mon",
+            "production": 6200
+        },
+        {
+            "day": "Tue",
+            "production": 6800
+        },
+        {
+            "day": "Wed",
+            "production": 6500
+        },
+        {
+            "day": "Thu",
+            "production": 7100
+        },
+        {
+            "day": "Fri",
+            "production": 6900
+        },
+        {
+            "day": "Sat",
+            "production": 5200
+        },
+        {
+            "day": "Sun",
+            "production": 3800
+        }
+    ],
+    "maintenance": [
+        {
+            "id": "TKT001",
+            "machine": "Plywood Press Line 1",
+            "issue": "Hydraulic pressure fluctuation detected",
+            "reportedBy": "James Martinez",
+            "status": "Open",
+            "date": "2024-11-28"
+        },
+        {
+            "id": "TKT002",
+            "machine": "Veneer Lathe Station A",
+            "issue": "Blade sharpness degradation",
+            "reportedBy": "Sarah Thompson",
+            "status": "In Progress",
+            "date": "2024-11-27"
+        },
+        {
+            "id": "TKT003",
+            "machine": "Sawmill Production Line 2",
+            "issue": "Conveyor belt alignment issue",
+            "reportedBy": "Michael Chen",
+            "status": "Open",
+            "date": "2024-11-29"
+        },
+        {
+            "id": "TKT004",
+            "machine": "Kiln Dryer Unit 4",
+            "issue": "Temperature sensor calibration required",
+            "reportedBy": "Emily Rodriguez",
+            "status": "Resolved",
+            "date": "2024-11-25"
+        },
+        {
+            "id": "TKT005",
+            "machine": "Laminating Press 3",
+            "issue": "Pressure gauge reading inconsistent",
+            "reportedBy": "David Wilson",
+            "status": "In Progress",
+            "date": "2024-11-26"
+        }
+    ],
+    "inventory": {
+        "raw": [
+            {
+                "id": "RAW001",
+                "name": "Southern Yellow Pine Logs",
+                "currentStock": 1250,
+                "targetStock": 1800,
+                "unit": "tons"
+            },
+            {
+                "id": "RAW002",
+                "name": "Douglas Fir Logs",
+                "currentStock": 980,
+                "targetStock": 1500,
+                "unit": "tons"
+            },
+            {
+                "id": "RAW003",
+                "name": "Phenol-Formaldehyde Resin",
+                "currentStock": 650,
+                "targetStock": 1000,
+                "unit": "gallons"
+            },
+            {
+                "id": "RAW004",
+                "name": "Melamine Urea Formaldehyde Adhesive",
+                "currentStock": 420,
+                "targetStock": 750,
+                "unit": "gallons"
+            },
+            {
+                "id": "RAW005",
+                "name": "Hardwood Veneer Sheets",
+                "currentStock": 2800,
+                "targetStock": 4000,
+                "unit": "sheets"
+            },
+            {
+                "id": "RAW006",
+                "name": "Wax Emulsion",
+                "currentStock": 180,
+                "targetStock": 300,
+                "unit": "gallons"
+            }
+        ],
+        "finished": [
+            {
+                "id": "FIN001",
+                "name": "3/4 inch Plywood Sheets (4x8)",
+                "currentStock": 5200,
+                "targetStock": 7500,
+                "unit": "sheets"
+            },
+            {
+                "id": "FIN002",
+                "name": "2x4x8 Dimensional Lumber",
+                "currentStock": 12500,
+                "targetStock": 18000,
+                "unit": "pieces"
+            },
+            {
+                "id": "FIN003",
+                "name": "2x6x10 Dimensional Lumber",
+                "currentStock": 8900,
+                "targetStock": 12000,
+                "unit": "pieces"
+            },
+            {
+                "id": "FIN004",
+                "name": "Engineered I-Joists (11-7/8 inch)",
+                "currentStock": 2400,
+                "targetStock": 4000,
+                "unit": "units"
+            },
+            {
+                "id": "FIN005",
+                "name": "Laminated Veneer Lumber Beams",
+                "currentStock": 1650,
+                "targetStock": 2500,
+                "unit": "beams"
+            },
+            {
+                "id": "FIN006",
+                "name": "OSB Panels (7/16 inch)",
+                "currentStock": 4100,
+                "targetStock": 6000,
+                "unit": "sheets"
+            },
+            {
+                "id": "FIN007",
+                "name": "Particleboard Sheets",
+                "currentStock": 2850,
+                "targetStock": 4500,
+                "unit": "sheets"
+            }
+        ]
+    }
+}
