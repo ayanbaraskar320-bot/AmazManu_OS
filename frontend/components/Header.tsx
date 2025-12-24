@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View } from '../App';
-import { useTheme } from '../contexts/ThemeContext';
-import { SunIcon, MoonIcon } from './icons/IconComponents';
+// Theme is fixed to dark; no toggle UI required.
 import { MaintenanceTicket, InventoryItem, TicketStatus } from '../types';
 
 interface HeaderProps {
@@ -11,7 +10,7 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ activeView, activeAlerts, lowInventoryItems }) => {
-    const { theme, toggleTheme } = useTheme();
+    // theme fixed to dark; no local toggle needed
     const [isAlertsOpen, setIsAlertsOpen] = useState(false);
     const alertsRef = useRef<HTMLDivElement>(null);
 
@@ -48,13 +47,6 @@ const Header: React.FC<HeaderProps> = ({ activeView, activeAlerts, lowInventoryI
         <header className="flex items-center justify-between h-20 px-8 bg-[#0f172a] border-b border-gray-800 text-white">
             <h1 className="text-2xl font-bold text-white">{title}</h1>
             <div className="flex items-center space-x-6">
-                <button
-                    onClick={toggleTheme}
-                    className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
-                    aria-label="Toggle theme"
-                >
-                    {theme === 'light' ? <MoonIcon className="w-6 h-6 text-gray-600 dark:text-gray-300" /> : <SunIcon className="w-6 h-6 text-gray-600 dark:text-gray-300" />}
-                </button>
                 <div className="relative" ref={alertsRef}>
                     <button onClick={() => setIsAlertsOpen(prev => !prev)} className="relative p-2 bg-gray-100 rounded-full hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600">
                         <svg className="w-6 h-6 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>

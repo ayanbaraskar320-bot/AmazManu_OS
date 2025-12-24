@@ -40,6 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView }) => {
     { id: 'orders', label: 'Supplier Orders', icon: <TruckIcon /> },
     { id: 'capacity', label: 'Capacity', icon: <CapacityIcon />, isNew: true },
     { id: 'training', label: 'Training', icon: <BookOpenIcon />, isNew: true },
+    { id: 'settings', label: 'Settings', icon: <LayersIcon /> },
   ];
 
   return (

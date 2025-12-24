@@ -28,21 +28,34 @@ if (!MONGODB_URI) {
 
 console.log('🔄 Connecting to MongoDB...');
 
-// Connection options
+// Improved connection options with longer timeouts and modern parser/topology
 const mongooseOptions = {
-  serverSelectionTimeoutMS: 5000,
+  // Mongoose 6+ enables the new URL parser and unified topology by default;
+  // avoid passing `useNewUrlParser` / `useUnifiedTopology` which are unsupported now.
+  serverSelectionTimeoutMS: 30000, // wait up to 30s for server selection
   socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
 };
 
-mongoose.connect(MONGODB_URI, mongooseOptions)
-  .then(() => {
+// Helper: connect with retry/backoff
+const connectWithRetry = async (retries = 5, backoffMs = 2000) => {
+  try {
+    await mongoose.connect(MONGODB_URI, mongooseOptions);
     console.log('✅ MongoDB Connected successfully');
     console.log('📊 Database:', mongoose.connection.name);
     seedDatabase(); // Seed data on connection
-  })
-  .catch(err => {
-    console.error('❌ MongoDB Connection Error:', err.message);
-  });
+  } catch (err) {
+    console.error('❌ MongoDB Connection Error:', err && err.message ? err.message : err);
+    if (retries > 0) {
+      console.log(`🔁 Retrying connection in ${backoffMs}ms... (${retries} retries left)`);
+      setTimeout(() => connectWithRetry(retries - 1, Math.min(backoffMs * 2, 60000)), backoffMs);
+    } else {
+      console.error('❌ All MongoDB connection attempts failed.');
+    }
+  }
+};
+
+connectWithRetry();
 
 // Monitor connection status
 mongoose.connection.on('connected', () => {
@@ -83,6 +96,8 @@ const oeeSchema = new mongoose.Schema({
   performance: Number,
   quality: Number,
   oee: Number
+  ,
+  createdAt: { type: Date, default: Date.now }
 });
 const Oee = mongoose.model('Oee', oeeSchema);
 
@@ -90,6 +105,8 @@ const Oee = mongoose.model('Oee', oeeSchema);
 const productionSchema = new mongoose.Schema({
   day: String,
   production: Number
+  ,
+  createdAt: { type: Date, default: Date.now }
 });
 const Production = mongoose.model('Production', productionSchema);
 
@@ -100,7 +117,9 @@ const maintenanceTicketSchema = new mongoose.Schema({
   issue: String,
   reportedBy: String,
   status: String,
-  date: String
+  date: String,
+  severity: { type: Number, default: 1 }, // 1-low, 2-medium, 3-high
+  openedAt: { type: Date, default: Date.now }
 });
 const MaintenanceTicket = mongoose.model('MaintenanceTicket', maintenanceTicketSchema);
 
@@ -124,23 +143,24 @@ const seedDatabase = async () => {
     if (oeeCount === 0) {
       console.log('🌱 Seeding OEE Data...');
       await Oee.insertMany([
-        { name: 'Plywood Press 1', availability: 92, performance: 95, quality: 99, oee: 86 },
-        { name: 'Veneer Lathe A', availability: 85, performance: 91, quality: 98, oee: 76 },
-        { name: 'Sawmill Line 3', availability: 95, performance: 88, quality: 97, oee: 81 },
+        { name: 'Plywood Press 1', availability: 92, performance: 95, quality: 99, oee: 86, createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24) },
+        { name: 'Veneer Lathe A', availability: 85, performance: 91, quality: 98, oee: 76, createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48) },
+        { name: 'Sawmill Line 3', availability: 95, performance: 88, quality: 97, oee: 81, createdAt: new Date() },
       ]);
     }
 
     const prodCount = await Production.countDocuments();
     if (prodCount === 0) {
       console.log('🌱 Seeding Production Data...');
+      const base = Date.now() - 6 * 24 * 60 * 60 * 1000;
       await Production.insertMany([
-        { day: 'Mon', production: 4000 },
-        { day: 'Tue', production: 3000 },
-        { day: 'Wed', production: 5000 },
-        { day: 'Thu', production: 4500 },
-        { day: 'Fri', production: 6000 },
-        { day: 'Sat', production: 5500 },
-        { day: 'Sun', production: 7000 },
+        { day: 'Mon', production: 4000, createdAt: new Date(base + 0 * 24 * 60 * 60 * 1000) },
+        { day: 'Tue', production: 3000, createdAt: new Date(base + 1 * 24 * 60 * 60 * 1000) },
+        { day: 'Wed', production: 5000, createdAt: new Date(base + 2 * 24 * 60 * 60 * 1000) },
+        { day: 'Thu', production: 4500, createdAt: new Date(base + 3 * 24 * 60 * 60 * 1000) },
+        { day: 'Fri', production: 6000, createdAt: new Date(base + 4 * 24 * 60 * 60 * 1000) },
+        { day: 'Sat', production: 5500, createdAt: new Date(base + 5 * 24 * 60 * 60 * 1000) },
+        { day: 'Sun', production: 7000, createdAt: new Date(base + 6 * 24 * 60 * 60 * 1000) },
       ]);
     }
 
@@ -148,9 +168,9 @@ const seedDatabase = async () => {
     if (ticketCount === 0) {
       console.log('🌱 Seeding Maintenance Tickets...');
       await MaintenanceTicket.insertMany([
-        { id: 'TKT001', machine: 'Plywood Press 1', issue: 'Hydraulic leak', reportedBy: 'John Doe', status: 'In Progress', date: '2024-07-20' },
-        { id: 'TKT002', machine: 'Sawmill Line 3', issue: 'Conveyor belt slipping', reportedBy: 'Jane Smith', status: 'Open', date: '2024-07-21' },
-        { id: 'TKT003', machine: 'Veneer Lathe A', issue: 'Blade alignment off', reportedBy: 'Mike Ross', status: 'Resolved', date: '2024-07-19' },
+        { id: 'TKT001', machine: 'Plywood Press 1', issue: 'Hydraulic leak', reportedBy: 'John Doe', status: 'In Progress', date: '2024-07-20', severity: 3, openedAt: new Date('2024-07-20') },
+        { id: 'TKT002', machine: 'Sawmill Line 3', issue: 'Conveyor belt slipping', reportedBy: 'Jane Smith', status: 'Open', date: '2024-07-21', severity: 2, openedAt: new Date('2024-07-21') },
+        { id: 'TKT003', machine: 'Veneer Lathe A', issue: 'Blade alignment off', reportedBy: 'Mike Ross', status: 'Resolved', date: '2024-07-19', severity: 1, openedAt: new Date('2024-07-19') },
       ]);
     }
 
@@ -187,7 +207,7 @@ app.get('/api/health', (req, res) => {
 // --- OEE Routes ---
 app.get('/api/oee', async (req, res) => {
   try {
-    const data = await Oee.find();
+    const data = await Oee.find().sort({ createdAt: -1 });
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -197,7 +217,7 @@ app.get('/api/oee', async (req, res) => {
 // --- Production Routes ---
 app.get('/api/production', async (req, res) => {
   try {
-    const data = await Production.find();
+    const data = await Production.find().sort({ createdAt: 1 });
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -207,7 +227,7 @@ app.get('/api/production', async (req, res) => {
 // --- Maintenance Routes ---
 app.get('/api/maintenance', async (req, res) => {
   try {
-    const data = await MaintenanceTicket.find();
+    const data = await MaintenanceTicket.find().sort({ severity: -1, openedAt: -1 });
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -217,7 +237,7 @@ app.get('/api/maintenance', async (req, res) => {
 // --- Inventory Routes ---
 app.get('/api/inventory/raw', async (req, res) => {
   try {
-    const data = await InventoryItem.find({ type: 'raw' });
+    const data = await InventoryItem.find({ type: 'raw' }).sort({ name: 1 });
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -226,7 +246,7 @@ app.get('/api/inventory/raw', async (req, res) => {
 
 app.get('/api/inventory/finished', async (req, res) => {
   try {
-    const data = await InventoryItem.find({ type: 'finished' });
+    const data = await InventoryItem.find({ type: 'finished' }).sort({ name: 1 });
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -242,7 +262,7 @@ app.get('/api/companies', async (req, res) => {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: 'Database not connected', companies: [] });
     }
-    const companies = await Company.find().lean();
+    const companies = await Company.find().sort({ createdAt: -1 }).lean();
     res.json(companies);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error: ' + error.message, companies: [] });

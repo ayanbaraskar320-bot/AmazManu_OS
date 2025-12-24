@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   getCompanies,
-  Company,
   getOeeData,
   getProductionTrend,
   getMaintenanceTickets,
   getRawMaterials,
-  getFinishedGoods
+  getFinishedGoods,
+  Company
 } from './Api';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -21,11 +21,12 @@ import CapacityView from './components/CapacityView';
 import TrainingView from './components/TrainingView';
 import LoginView from './components/LoginView';
 import MarketplaceView from './components/MarketplaceView';
+import SettingsView from './components/SettingsView';
 
 import { ThemeProvider } from './contexts/ThemeContext';
 import { OeeData, ProductionData, MaintenanceTicket, InventoryItem, TicketStatus } from './types';
 
-export type View = 'dashboard' | 'sops' | 'maintenance' | 'inventory' | 'orders' | 'analytics' | 'predictive' | 'capacity' | 'training' | 'marketplace';
+export type View = 'dashboard' | 'sops' | 'maintenance' | 'inventory' | 'orders' | 'analytics' | 'predictive' | 'capacity' | 'training' | 'marketplace' | 'settings';
 export interface PrefilledTicket {
   machine: string;
   issue: string;
@@ -36,6 +37,12 @@ const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [prefilledTicket, setPrefilledTicket] = useState<PrefilledTicket | null>(null);
 
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(3000); // milliseconds, 0 = off
+
   // Lifted state for global data management
   // Lifted state for global data management
   const [oeeData, setOeeData] = useState<OeeData[]>([]);
@@ -44,40 +51,69 @@ const App: React.FC = () => {
   const [rawMaterials, setRawMaterials] = useState<InventoryItem[]>([]);
   const [finishedGoods, setFinishedGoods] = useState<InventoryItem[]>([]);
 
-  const [companiesFromDB, setCompaniesFromDB] = useState<Company[]>([]);
-  const [loadingDB, setLoadingDB] = useState(false);
+  
 
   // Centralized data simulation logic
   // Fetch initial data
   useEffect(() => {
-    if (isAuthenticated) {
-      const fetchData = async () => {
-        try {
-          setLoadingDB(true);
-          const [oee, trend, tickets, raw, finished, companies] = await Promise.all([
-            getOeeData(),
-            getProductionTrend(),
-            getMaintenanceTickets(),
-            getRawMaterials(),
-            getFinishedGoods(),
-            getCompanies()
-          ]);
+    if (!isAuthenticated) return;
+    setLoading(true);
+    const fetchData = async () => {
+      try {
+        const [companiesRes, oee, trend, tickets, raw, finished] = await Promise.all([
+          getCompanies(),
+          getOeeData(),
+          getProductionTrend(),
+          getMaintenanceTickets(),
+          getRawMaterials(),
+          getFinishedGoods()
+        ]);
 
-          setOeeData(oee);
-          setProductionTrend(trend);
-          setMaintenanceTickets(tickets);
-          setRawMaterials(raw);
-          setFinishedGoods(finished);
-          setCompaniesFromDB(companies);
-        } catch (error) {
-          console.error("Failed to fetch dashboard data:", error);
-        } finally {
-          setLoadingDB(false);
-        }
-      };
-      fetchData();
-    }
+        setCompanies(companiesRes);
+        setOeeData(oee);
+        setProductionTrend(trend);
+        setMaintenanceTickets(tickets);
+        setRawMaterials(raw);
+        setFinishedGoods(finished);
+      } catch (e: any) {
+        console.error('Failed to fetch dashboard data:', e);
+        setError(e.message || 'Failed to load data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, [isAuthenticated]);
+  
+  // Expose a refresh function so child components can trigger data reloads after imports
+  const refreshData = async () => {
+    if (!isAuthenticated) return;
+    setLoading(true);
+    try {
+      const [companiesRes, oee, trend, tickets, raw, finished] = await Promise.all([
+        getCompanies(),
+        getOeeData(),
+        getProductionTrend(),
+        getMaintenanceTickets(),
+        getRawMaterials(),
+        getFinishedGoods()
+      ]);
+
+      setCompanies(companiesRes);
+      setOeeData(oee);
+      setProductionTrend(trend);
+      setMaintenanceTickets(tickets);
+      setRawMaterials(raw);
+      setFinishedGoods(finished);
+      setError(null);
+    } catch (e: any) {
+      console.error('Failed to refresh dashboard data:', e);
+      setError(e.message || 'Failed to refresh data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Centralized data simulation logic
   useEffect(() => {
@@ -85,6 +121,8 @@ const App: React.FC = () => {
     if (!isAuthenticated) return;
 
     const clamp = (num: number, min: number, max: number) => Math.min(Math.max(num, min), max);
+
+    if (!autoRefreshInterval || autoRefreshInterval <= 0) return;
 
     const interval = setInterval(() => {
       // Simulate OEE data fluctuations
@@ -143,10 +181,10 @@ const App: React.FC = () => {
           return item;
         });
       });
-    }, 3000); // Update every 3 seconds
+    }, autoRefreshInterval);
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, oeeData.length]); // Added oeeData.length to dependency to update machines list if needed, though mostly fine.
+  }, [isAuthenticated, oeeData.length, autoRefreshInterval]); // Added autoRefreshInterval so changes take effect
 
   const handleTakeAction = (machine: string, issue: string) => {
     setPrefilledTicket({ machine, issue });
@@ -166,9 +204,13 @@ const App: React.FC = () => {
           productionTrend={productionTrend}
           maintenanceTickets={maintenanceTickets}
           rawMaterials={rawMaterials}
-          companiesFromDB={companiesFromDB}
-          loadingDB={loadingDB}
           onNavigate={setActiveView}
+          companies={companies}
+          onImported={refreshData}
+          isAdmin={isAdmin}
+          setIsAdmin={setIsAdmin}
+          autoRefreshInterval={autoRefreshInterval}
+          setAutoRefreshInterval={setAutoRefreshInterval}
         />;
       case 'sops':
         return <SopView />;
@@ -198,6 +240,14 @@ const App: React.FC = () => {
         return <TrainingView />;
       case 'marketplace':
         return <MarketplaceView />;
+      case 'settings':
+        return <SettingsView
+          onImported={refreshData}
+          isAdmin={isAdmin}
+          setIsAdmin={setIsAdmin}
+          autoRefreshInterval={autoRefreshInterval}
+          setAutoRefreshInterval={setAutoRefreshInterval}
+        />;
       default:
         return <DashboardView
           oeeData={oeeData}
@@ -205,9 +255,13 @@ const App: React.FC = () => {
           productionTrend={productionTrend}
           maintenanceTickets={maintenanceTickets}
           rawMaterials={rawMaterials}
-          companiesFromDB={companiesFromDB}
-          loadingDB={loadingDB}
           onNavigate={setActiveView}
+          companies={companies}
+          onImported={refreshData}
+          isAdmin={isAdmin}
+          setIsAdmin={setIsAdmin}
+          autoRefreshInterval={autoRefreshInterval}
+          setAutoRefreshInterval={setAutoRefreshInterval}
         />;
     }
   };
@@ -229,7 +283,13 @@ const App: React.FC = () => {
               lowInventoryItems={lowInventoryItems}
             />
             <main className="flex-1 overflow-x-hidden overflow-y-auto bg-[#0f172a] p-4 md:p-8">
-              {renderView()}
+              {loading ? (
+                <div className="flex items-center justify-center h-96 text-gray-300">Loading dashboard data…</div>
+              ) : error ? (
+                <div className="flex items-center justify-center h-96 text-red-400">{error}</div>
+              ) : (
+                renderView()
+              )}
             </main>
           </div>
         </div>

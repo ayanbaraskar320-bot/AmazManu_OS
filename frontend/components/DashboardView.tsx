@@ -3,8 +3,10 @@ import Card from './ui/Card';
 import OeeGaugeChart from './charts/OeeGaugeChart';
 import ProductionTrendChart from './charts/ProductionTrendChart';
 import { OeeData, TicketStatus, ProductionData, MaintenanceTicket, InventoryItem } from '../types';
+import { Company } from '../Api';
 import Button from './ui/Button';
 import Modal from './ui/Modal';
+import { importAllData } from '../Api';
 import { PencilIcon, DownloadIcon, TrendingUpIcon, BoxIcon, WrenchIcon, TruckIcon, TreeIcon, FlameIcon, LayersIcon, SawIcon, GlobeIcon } from './icons/IconComponents';
 import { exportToCsv } from '../utils/exportUtils';
 
@@ -14,9 +16,13 @@ interface DashboardViewProps {
     productionTrend: ProductionData[];
     maintenanceTickets: MaintenanceTicket[];
     rawMaterials: InventoryItem[];
-    companiesFromDB: any[];
-    loadingDB: boolean;
     onNavigate: (view: any) => void;
+    companies?: Company[];
+    onImported?: () => Promise<void>;
+    isAdmin?: boolean;
+    setIsAdmin?: (v: boolean) => void;
+    autoRefreshInterval?: number;
+    setAutoRefreshInterval?: (v: number) => void;
 }
 
 const SummaryCard: React.FC<{ title: string; value: string | number; subtext?: string; icon: React.ReactNode; color: string; trend?: 'up' | 'down' | 'neutral' }> = ({ title, value, subtext, icon, color, trend }) => (
@@ -85,10 +91,18 @@ const PlantFloorNode: React.FC<{
     );
 };
 
-const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, productionTrend, maintenanceTickets, rawMaterials, companiesFromDB, loadingDB, onNavigate }) => {
+const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, productionTrend, maintenanceTickets, rawMaterials, onNavigate, onImported, isAdmin, setIsAdmin, autoRefreshInterval, setAutoRefreshInterval }) => {
     const [isOeeModalOpen, setIsOeeModalOpen] = useState(false);
     const [currentMachine, setCurrentMachine] = useState<OeeData | null>(null);
     const [newOeeMetrics, setNewOeeMetrics] = useState({ availability: 0, performance: 0, quality: 0 });
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+    const [importText, setImportText] = useState('');
+    const [detectedArrays, setDetectedArrays] = useState<Array<{ path: string; sample: any[] }>>([]);
+    const [mapping, setMapping] = useState<Record<string, string>>({ companies: 'None', oee: 'None', production: 'None', maintenance: 'None', inventory_raw: 'None', inventory_finished: 'None' });
+    const [importPreview, setImportPreview] = useState<Record<string, any[]>>({});
+    const [mappingFields, setMappingFields] = useState<Record<string, Record<string, string>>>({});
+    const [importing, setImporting] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const activeAlerts = maintenanceTickets.filter(t => t.status !== TicketStatus.Resolved);
     const lowInventoryItems = rawMaterials.filter(i => (i.currentStock / i.targetStock) < 0.5);
@@ -150,6 +164,163 @@ const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, prod
     const handleExportOee = () => {
         exportToCsv(oeeData, `oee_data_${new Date().toISOString().split('T')[0]}.csv`);
     };
+
+    // Helpers for import preview
+    const findArraysInObject = (obj: any, basePath = ''): Array<{ path: string; sample: any[] }> => {
+        const results: Array<{ path: string; sample: any[] }> = [];
+        const helper = (value: any, path: string) => {
+            if (Array.isArray(value)) {
+                results.push({ path, sample: value.slice(0, 5) });
+                value.forEach((item, idx) => helper(item, `${path}[${idx}]`));
+            } else if (value && typeof value === 'object') {
+                Object.keys(value).forEach(k => helper(value[k], path ? `${path}.${k}` : k));
+            }
+        };
+        helper(obj, basePath);
+        return results;
+    };
+
+    const handleFileInput = (file: File | null) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            setImportText(String(reader.result || ''));
+        };
+        reader.readAsText(file);
+    };
+
+    const detectArrays = () => {
+        try {
+            const parsed = JSON.parse(importText);
+            const arrays = findArraysInObject(parsed);
+            // Normalize paths to top-level arrays first: prefer top-level keys
+            const topLevel: Array<{ path: string; sample: any[] }> = [];
+            if (parsed && typeof parsed === 'object') {
+                Object.keys(parsed).forEach(k => {
+                    if (Array.isArray(parsed[k])) topLevel.push({ path: k, sample: parsed[k].slice(0, 5) });
+                });
+            }
+            const final = topLevel.length > 0 ? topLevel : arrays;
+            setDetectedArrays(final);
+            // reset mapping and preview
+            setMapping({ companies: 'None', oee: 'None', production: 'None', maintenance: 'None', inventory_raw: 'None', inventory_finished: 'None' });
+            setImportPreview({});
+        } catch (e) {
+            setDetectedArrays([]);
+            setImportPreview({});
+            console.error('Invalid JSON for import detection', e);
+            alert('Invalid JSON. Please paste valid JSON or upload a JSON file.');
+        }
+    };
+
+    const updateMapping = (target: string, path: string) => {
+        setMapping(prev => ({ ...prev, [target]: path }));
+        // update preview
+        try {
+            const parsed = JSON.parse(importText);
+            const value = path === 'None' ? undefined : path.split('.').reduce((acc: any, key: string) => acc && acc[key], parsed);
+            const sample = Array.isArray(value) ? value.slice(0, 5) : [];
+            setImportPreview(prev => ({ ...prev, [target]: sample }));
+            // reset field mappings for this target
+            if (sample.length > 0) {
+                const sampleKeys = Object.keys(sample[0] || {});
+                setMappingFields(prev => ({ ...prev, [target]: {} }));
+            } else {
+                setMappingFields(prev => ({ ...prev, [target]: {} }));
+            }
+        } catch (e) {
+            // ignore
+        }
+    };
+
+    const buildPayloadFromMapping = () => {
+        const payload: any = {};
+        try {
+            const parsed = JSON.parse(importText);
+            const getArrayByPath = (path: string) => {
+                if (!path || path === 'None') return [];
+                const val = path.split('.').reduce((acc: any, key: string) => acc && acc[key], parsed);
+                return Array.isArray(val) ? val : [];
+            };
+
+            // helper to map fields using mappingFields; falls back to original object if no mapping
+            const mapArray = (arr: any[], targetKey: string, expectedFields: string[]) => {
+                if (!arr || arr.length === 0) return [];
+                const fieldMap = mappingFields[targetKey] || {};
+                return arr.map(item => {
+                    if (!fieldMap || Object.keys(fieldMap).length === 0) return item;
+                    const mapped: any = {};
+                    expectedFields.forEach(f => {
+                        const sourceKey = fieldMap[f];
+                        if (sourceKey && sourceKey !== 'None') {
+                            mapped[f] = item[sourceKey];
+                        }
+                    });
+                    return mapped;
+                });
+            };
+
+            payload.companies = mapArray(getArrayByPath(mapping.companies || 'None'), 'companies', ['name', 'industry', 'employees', 'revenue', 'location']);
+            payload.oee = mapArray(getArrayByPath(mapping.oee || 'None'), 'oee', ['name', 'availability', 'performance', 'quality', 'oee']);
+            payload.production = mapArray(getArrayByPath(mapping.production || 'None'), 'production', ['day', 'production', 'createdAt']);
+            payload.maintenance = mapArray(getArrayByPath(mapping.maintenance || 'None'), 'maintenance', ['id', 'machine', 'issue', 'reportedBy', 'status', 'date', 'severity', 'openedAt']);
+            const rawArr = mapArray(getArrayByPath(mapping.inventory_raw || 'None'), 'inventory_raw', ['id', 'name', 'currentStock', 'targetStock', 'unit']);
+            const finArr = mapArray(getArrayByPath(mapping.inventory_finished || 'None'), 'inventory_finished', ['id', 'name', 'currentStock', 'targetStock', 'unit']);
+            payload.inventory = { raw: rawArr, finished: finArr };
+        } catch (e) {
+            console.error('Error building payload', e);
+        }
+        return payload;
+    };
+
+    const autoMapFields = (target: string) => {
+        const sample = importPreview[target] && importPreview[target].length > 0 ? importPreview[target][0] : null;
+        if (!sample) return;
+        const sampleKeys = Object.keys(sample);
+        const expectedByTarget: Record<string, string[]> = {
+            companies: ['name', 'industry', 'employees', 'revenue', 'location'],
+            oee: ['name', 'availability', 'performance', 'quality', 'oee'],
+            production: ['day', 'production', 'createdAt'],
+            maintenance: ['id', 'machine', 'issue', 'reportedBy', 'status', 'date', 'severity', 'openedAt'],
+            inventory_raw: ['id', 'name', 'currentStock', 'targetStock', 'unit'],
+            inventory_finished: ['id', 'name', 'currentStock', 'targetStock', 'unit'],
+        };
+        const expected = expectedByTarget[target] || [];
+        const fieldMap: Record<string, string> = {};
+        expected.forEach(f => {
+            const match = sampleKeys.find(k => k.toLowerCase() === f.toLowerCase()) || sampleKeys.find(k => k.toLowerCase().includes(f.toLowerCase()));
+            fieldMap[f] = match || 'None';
+        });
+        setMappingFields(prev => ({ ...prev, [target]: fieldMap }));
+    };
+
+    const handleConfirmImport = async () => {
+        setImporting(true);
+        const payload = buildPayloadFromMapping();
+        try {
+            const res = await importAllData(payload);
+            alert(`Import success: ${res.message || 'Imported'}`);
+            // optionally close and trigger a refresh: simple approach is reload page or ask parent to refetch
+            setIsImportModalOpen(false);
+            if (onImported) {
+                try {
+                    await onImported();
+                } catch (e) {
+                    console.warn('Parent refresh failed, falling back to reload', e);
+                    window.location.reload();
+                }
+            } else {
+                window.location.reload();
+            }
+        } catch (e: any) {
+            console.error('Import failed', e);
+            alert('Import failed: ' + (e.message || String(e)));
+        } finally {
+            setImporting(false);
+        }
+    };
+
+    // Theme is fixed to dark globally; no local theme hook required here.
 
     return (
         <>
@@ -241,150 +412,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, prod
                         </div>
                     </div>
                 </div>
-
-                {/* Companies Dataset Section */}
-                <Card title="Companies Dataset from MongoDB">
-                    <div className="p-6">
-                        {/* Import Section */}
-                        <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-gray-700">
-                            <h4 className="text-sm font-bold text-white mb-3">📁 Import Full System Data</h4>
-                            <input
-                                type="file"
-                                accept=".json"
-                                onChange={async (e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-
-                                    const reader = new FileReader();
-                                    reader.onload = async (event) => {
-                                        try {
-                                            const content = event.target?.result as string;
-                                            const jsonData = JSON.parse(content);
-
-                                            // Check if it's a full system export or just companies
-                                            if (jsonData.companies && jsonData.oee) {
-                                                // It's likely a full system export
-                                                const { importAllData } = await import('../Api');
-                                                const result = await importAllData(jsonData);
-                                                alert(`Success! Imported: \nCompanies: ${result.counts.companies}\nOEE: ${result.counts.oee}\nProduction: ${result.counts.production}\nTickets: ${result.counts.maintenance}\nInventory: ${result.counts.inventory}`);
-                                            } else {
-                                                // Fallback for just companies array or object
-                                                const companies = Array.isArray(jsonData) ? jsonData : (jsonData.companies || [jsonData]);
-                                                const { importCompanies } = await import('../Api');
-                                                const result = await importCompanies(companies);
-                                                alert(`Success! ${result.count} companies imported.`);
-                                            }
-
-                                            window.location.reload();
-                                        } catch (error) {
-                                            console.error('Import error:', error);
-                                            alert('Error importing dataset: ' + (error as Error).message);
-                                        }
-                                    };
-                                    reader.readAsText(file);
-                                }}
-                                className="block w-full text-sm text-gray-400
-                                    file:mr-4 file:py-2 file:px-4
-                                    file:rounded-lg file:border-0
-                                    file:text-sm file:font-semibold
-                                    file:bg-bc-green file:text-white
-                                    hover:file:bg-emerald-700 cursor-pointer"
-                            />
-                            <p className="text-xs text-gray-500 mt-2">
-                                Upload <code>sample-data.json</code> to populate Companies, OEE, Production, Maintenance, and Inventory data.
-                            </p>
-                        </div>
-
-                        {/* Manual Add Form */}
-                        <div className="mb-6 p-4 bg-gray-800 rounded-lg border border-gray-700">
-                            <h4 className="text-sm font-bold text-white mb-3">➕ Add Single Company</h4>
-                            <form onSubmit={async (e) => {
-                                e.preventDefault();
-                                const formData = new FormData(e.currentTarget);
-                                const company = {
-                                    name: formData.get('name') as string,
-                                    industry: formData.get('industry') as string,
-                                    employees: parseInt(formData.get('employees') as string),
-                                    revenue: parseFloat(formData.get('revenue') as string)
-                                };
-
-                                try {
-                                    const { addCompany } = await import('../Api');
-                                    await addCompany(company);
-                                    alert('Company added successfully!');
-                                    e.currentTarget.reset();
-                                    window.location.reload(); // Temporary solution
-                                } catch (error) {
-                                    console.error('Add error:', error);
-                                    alert('Error adding company: ' + (error as Error).message);
-                                }
-                            }} className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <input
-                                    type="text"
-                                    name="name"
-                                    placeholder="Company Name"
-                                    required
-                                    className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-bc-green"
-                                />
-                                <input
-                                    type="text"
-                                    name="industry"
-                                    placeholder="Industry"
-                                    required
-                                    className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-bc-green"
-                                />
-                                <input
-                                    type="number"
-                                    name="employees"
-                                    placeholder="Employees"
-                                    required
-                                    className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-bc-green"
-                                />
-                                <input
-                                    type="number"
-                                    name="revenue"
-                                    placeholder="Revenue"
-                                    required
-                                    step="0.01"
-                                    className="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-bc-green"
-                                />
-                                <Button type="submit" className="md:col-span-2">Add Company</Button>
-                            </form>
-                        </div>
-
-                        {/* Companies List */}
-                        {loadingDB ? (
-                            <div className="text-center py-8">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-bc-green mx-auto"></div>
-                                <p className="mt-2 text-gray-400">Loading companies...</p>
-                            </div>
-                        ) : companiesFromDB.length > 0 ? (
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {companiesFromDB.map((company, index) => (
-                                        <div key={company._id || index} className="bg-gray-800 rounded-lg shadow-sm p-4 border border-gray-700 hover:border-bc-green transition-colors">
-                                            <h3 className="font-bold text-white mb-2">{company.name}</h3>
-                                            <div className="space-y-1 text-sm text-gray-400">
-                                                <p><strong className="text-gray-300">Industry:</strong> {company.industry}</p>
-                                                <p><strong className="text-gray-300">Employees:</strong> {company.employees?.toLocaleString()}</p>
-                                                <p><strong className="text-gray-300">Revenue:</strong> ${company.revenue?.toLocaleString()}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="text-center text-sm text-gray-400 pt-4 border-t border-gray-700">
-                                    Total Companies: {companiesFromDB.length}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-gray-400 bg-gray-800 rounded-lg border border-gray-700">
-                                <div className="text-5xl mb-4">📊</div>
-                                <p className="text-base mb-2">No companies found in database</p>
-                                <p className="text-sm text-gray-500">Use the import or add form above to get started</p>
-                            </div>
-                        )}
-                    </div>
-                </Card>
 
                 {/* Marketplace Section */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -553,28 +580,49 @@ const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, prod
                         )}
                     </div>
 
-                    <Card title="Quick Actions" className="shadow-lg border-l-4 border-bc-blue">
-                        <div className="p-4 grid grid-cols-2 gap-3">
-                            <Button onClick={() => onNavigate('analytics')} variant="secondary" className="text-xs justify-center">
-                                <TrendingUpIcon className="w-4 h-4 mr-2" />
-                                Analytics
-                            </Button>
-                            <Button onClick={() => onNavigate('marketplace')} variant="secondary" className="text-xs justify-center">
-                                <GlobeIcon className="w-4 h-4 mr-2" />
-                                Marketplace
-                            </Button>
-                            <Button onClick={() => onNavigate('sops')} variant="secondary" className="text-xs justify-center">
-                                <TreeIcon className="w-4 h-4 mr-2" />
-                                SOPs
-                            </Button>
-                            <Button onClick={() => onNavigate('maintenance')} variant="secondary" className="text-xs justify-center">
-                                <WrenchIcon className="w-4 h-4 mr-2" />
-                                Maintenance
-                            </Button>
-                            <Button onClick={() => onNavigate('orders')} variant="secondary" className="text-xs justify-center">
-                                <TruckIcon className="w-4 h-4 mr-2" />
-                                Orders
-                            </Button>
+                    <Card title="Settings" className="shadow-lg border-l-4 border-bc-blue">
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <h4 className="text-sm font-medium text-gray-400 mb-2 uppercase">Navigate</h4>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Button onClick={() => onNavigate('analytics')} variant="secondary" className="text-xs justify-center">
+                                        <TrendingUpIcon className="w-4 h-4 mr-2" />
+                                        Analytics
+                                    </Button>
+                                    <Button onClick={() => onNavigate('marketplace')} variant="secondary" className="text-xs justify-center">
+                                        <GlobeIcon className="w-4 h-4 mr-2" />
+                                        Marketplace
+                                    </Button>
+                                    <Button onClick={() => onNavigate('sops')} variant="secondary" className="text-xs justify-center">
+                                        <TreeIcon className="w-4 h-4 mr-2" />
+                                        SOPs
+                                    </Button>
+                                    <Button onClick={() => onNavigate('maintenance')} variant="secondary" className="text-xs justify-center">
+                                        <WrenchIcon className="w-4 h-4 mr-2" />
+                                        Maintenance
+                                    </Button>
+                                    <Button onClick={() => onNavigate('orders')} variant="secondary" className="text-xs justify-center">
+                                        <TruckIcon className="w-4 h-4 mr-2" />
+                                        Orders
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-sm font-medium text-gray-400 mb-2 uppercase">Data</h4>
+                                <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                        <Button onClick={() => setIsSettingsOpen(true)} variant="secondary" className="text-xs w-1/2 justify-center">
+                                            Settings
+                                        </Button>
+                                        <Button onClick={() => setIsImportModalOpen(true)} variant="secondary" className="text-xs w-1/2 justify-center" disabled={!isAdmin}>
+                                            <DownloadIcon className="w-4 h-4 mr-2" />
+                                            {isAdmin ? 'Import Data' : 'Import (admin)'}
+                                        </Button>
+                                    </div>
+                                    {!isAdmin && <p className="text-xs text-gray-500">Importing is restricted to admins. Open Settings to request access.</p>}
+                                </div>
+                            </div>
                         </div>
                     </Card>
                 </div>
@@ -599,6 +647,252 @@ const DashboardView: React.FC<DashboardViewProps> = ({ oeeData, setOeeData, prod
                     </div>
                 </form>
             </Modal>
+            <Modal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} title={`Import / Preview Data` }>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Upload JSON file</label>
+                        <input type="file" accept="application/json" onChange={(e) => handleFileInput(e.target.files ? e.target.files[0] : null)} className="mt-2" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Or paste JSON</label>
+                        <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={6} className="mt-2 block w-full p-2 border border-gray-300 rounded-md dark:bg-gray-800 dark:border-gray-600 dark:text-white" />
+                    </div>
+                    <div className="flex gap-2">
+                        <Button onClick={detectArrays} variant="secondary">Detect Arrays</Button>
+                        <Button onClick={() => { setImportText(''); setDetectedArrays([]); setImportPreview({}); setMapping({ companies: 'None', oee: 'None', production: 'None', maintenance: 'None', inventory_raw: 'None', inventory_finished: 'None' }); }}>Clear</Button>
+                    </div>
+
+                    {detectedArrays.length > 0 && (
+                        <div className="space-y-3">
+                            <p className="text-sm font-medium text-gray-600">Detected arrays (choose which maps to each collection)</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs text-gray-500">Companies</label>
+                                    <select value={mapping.companies} onChange={(e) => updateMapping('companies', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('companies')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.companies && importPreview.companies[0]) ? Object.keys(importPreview.companies[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['name','industry','employees','revenue','location'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['companies']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, companies: { ...(prev.companies || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.companies && importPreview.companies[0]) ? Object.keys(importPreview.companies[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-500">OEE</label>
+                                    <select value={mapping.oee} onChange={(e) => updateMapping('oee', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('oee')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.oee && importPreview.oee[0]) ? Object.keys(importPreview.oee[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['name','availability','performance','quality','oee'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['oee']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, oee: { ...(prev.oee || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.oee && importPreview.oee[0]) ? Object.keys(importPreview.oee[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-500">Production</label>
+                                    <select value={mapping.production} onChange={(e) => updateMapping('production', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('production')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.production && importPreview.production[0]) ? Object.keys(importPreview.production[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['day','production','createdAt'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['production']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, production: { ...(prev.production || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.production && importPreview.production[0]) ? Object.keys(importPreview.production[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-500">Maintenance</label>
+                                    <select value={mapping.maintenance} onChange={(e) => updateMapping('maintenance', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('maintenance')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.maintenance && importPreview.maintenance[0]) ? Object.keys(importPreview.maintenance[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['id','machine','issue','reportedBy','status','date','severity','openedAt'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['maintenance']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, maintenance: { ...(prev.maintenance || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.maintenance && importPreview.maintenance[0]) ? Object.keys(importPreview.maintenance[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-gray-500">Inventory (raw)</label>
+                                    <select value={mapping.inventory_raw} onChange={(e) => updateMapping('inventory_raw', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('inventory_raw')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.inventory_raw && importPreview.inventory_raw[0]) ? Object.keys(importPreview.inventory_raw[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['id','name','currentStock','targetStock','unit'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['inventory_raw']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, inventory_raw: { ...(prev.inventory_raw || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.inventory_raw && importPreview.inventory_raw[0]) ? Object.keys(importPreview.inventory_raw[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-gray-500">Inventory (finished)</label>
+                                    <select value={mapping.inventory_finished} onChange={(e) => updateMapping('inventory_finished', e.target.value)} className="mt-1 block w-full p-2 border rounded">
+                                        <option value="None">None</option>
+                                        {detectedArrays.map(a => <option key={a.path} value={a.path}>{a.path}</option>)}
+                                    </select>
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <button type="button" className="text-xs text-blue-600" onClick={() => autoMapFields('inventory_finished')}>Auto-map fields</button>
+                                            <span className="text-xs text-gray-400">Sample rows</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            {(importPreview.inventory_finished && importPreview.inventory_finished[0]) ? Object.keys(importPreview.inventory_finished[0]).map(k => (
+                                                <div key={k} className="text-xs bg-gray-50 p-1 rounded">{k}</div>
+                                            )) : <div className="text-xs text-gray-400">No sample</div>}
+                                        </div>
+                                        <div className="mt-2 text-xs">
+                                            {['id','name','currentStock','targetStock','unit'].map(field => (
+                                                <div key={field} className="flex items-center gap-2 mb-1">
+                                                    <label className="w-24 text-xs text-gray-600">{field}</label>
+                                                    <select value={mappingFields['inventory_finished']?.[field] || 'None'} onChange={(e) => setMappingFields(prev => ({ ...prev, inventory_finished: { ...(prev.inventory_finished || {}), [field]: e.target.value } }))} className="p-1 text-xs border rounded">
+                                                        <option value="None">None</option>
+                                                        {(importPreview.inventory_finished && importPreview.inventory_finished[0]) ? Object.keys(importPreview.inventory_finished[0]).map(k => <option key={k} value={k}>{k}</option>) : null}
+                                                    </select>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex justify-end pt-4">
+                        <Button type="button" variant="secondary" onClick={() => setIsImportModalOpen(false)} className="mr-2">Cancel</Button>
+                        <Button type="button" onClick={handleConfirmImport} disabled={importing}>{importing ? 'Importing…' : 'Import Selected'}</Button>
+                    </div>
+                </div>
+            </Modal>
+            {isSettingsOpen && (
+                <div className="fixed inset-0 z-50 flex">
+                    <div className="absolute inset-0 bg-black/40" onClick={() => setIsSettingsOpen(false)} />
+                    <aside className="relative ml-auto w-80 bg-white dark:bg-gray-800 p-6 shadow-xl overflow-auto">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold">Settings</h3>
+                            <button onClick={() => setIsSettingsOpen(false)} className="text-sm text-gray-500">Close</button>
+                        </div>
+
+                        <div className="space-y-4">
+                            {/* Theme is fixed to dark mode; UI to toggle removed */}
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Auto-refresh</label>
+                                <div className="mt-2">
+                                    <select value={String(autoRefreshInterval || 0)} onChange={(e) => setAutoRefreshInterval && setAutoRefreshInterval(Number(e.target.value))} className="p-2 border rounded w-full">
+                                        <option value="0">Off</option>
+                                        <option value="3000">3 seconds</option>
+                                        <option value="5000">5 seconds</option>
+                                        <option value="10000">10 seconds</option>
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-2">Controls simulation and preview auto-updates.</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Admin Access</label>
+                                <div className="mt-2 flex items-center gap-3">
+                                    <label className="flex items-center gap-2">
+                                        <input type="checkbox" checked={!!isAdmin} onChange={(e) => setIsAdmin && setIsAdmin(e.target.checked)} />
+                                        <span className="text-xs">Grant admin privileges (enables import)</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end pt-4">
+                                <Button type="button" variant="secondary" onClick={() => setIsSettingsOpen(false)} className="mr-2">Close</Button>
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+            )}
         </>
     );
 };
